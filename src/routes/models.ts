@@ -1,6 +1,6 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import type { Context } from '../context.js'
-import { ModelsResponse } from '../schemas.js'
+import { ModelsResponse } from '../schemas/models.js'
 
 const getModels = createRoute({
   method: 'get',

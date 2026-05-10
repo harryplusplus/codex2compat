@@ -1,6 +1,6 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import { streamSSE } from 'hono/streaming'
-import { ReasoningEffort } from '../schemas.js'
+import { ReasoningEffort } from '../schemas/models.js'
 import type { Context } from '../context.js'
 
 const ImageDetail = z

@@ -8,8 +8,9 @@ import {
   ModelVisibility,
   ReasoningEffort,
   TruncationPolicyConfig,
-} from './schemas.js'
+} from './schemas/models.js'
 import stripJsonComments from 'strip-json-comments'
+import { NONE, some, type Option } from './utils.js'
 
 const log = createNamedLog('models-manager')
 
@@ -18,15 +19,15 @@ const BASE_INSTRUCTIONS_PATH = path.join(
   '../assets/prompt.md',
 )
 
-const ReasoningEffortPreset = z.object({
+const ReasoningEffortPresetForFile = z.object({
   effort: ReasoningEffort,
   description: z.string().optional(),
 })
 
-const ModelInfo = z.object({
+const ModelInfoForFile = z.object({
   slug: z.string(),
   display_name: z.string().optional(),
-  supported_reasoning_levels: ReasoningEffortPreset.array().default([]),
+  supported_reasoning_levels: ReasoningEffortPresetForFile.array().default([]),
   shell_type: ConfigShellToolType.default('default'),
   visibility: ModelVisibility.default('list'),
   supported_in_api: z.boolean().default(true),
@@ -42,16 +43,21 @@ const ModelInfo = z.object({
   experimental_supported_tools: z.unknown().array().default([]),
 })
 
-const ModelsJson = z.object({ models: ModelInfo.array().default([]) })
-type ModelsJson = z.infer<typeof ModelsJson>
+const ModelsForFile = z.object({ models: ModelInfoForFile.array().default([]) })
+type ModelsForFile = z.infer<typeof ModelsForFile>
 
-async function loadBaseInstructions(): Promise<string> {
-  return await fs.readFile(BASE_INSTRUCTIONS_PATH, 'utf8')
+class BaseInstructions {
+  _content: string | null = null
+
+  async load(): Promise<string> {
+    if (!this._content) {
+      this._content = await fs.readFile(BASE_INSTRUCTIONS_PATH, 'utf8')
+    }
+    return this._content
+  }
 }
 
-async function loadModelsJson(
-  path: string,
-): Promise<[true, ModelsJson] | [false, null]> {
+async function loadModelsForFile(path: string): Promise<Option<ModelsForFile>> {
   try {
     await fs.access(path)
   } catch (err) {
@@ -60,19 +66,22 @@ async function loadModelsJson(
       path,
       error: String(err),
     }))
-    return [false, null]
+    return NONE
   }
 
-  let content = ''
-  try {
-    content = await fs.readFile(path, 'utf8')
-  } catch (err) {
-    log('error', () => ({
-      message: 'failed to read models file',
-      path,
-      error: String(err),
-    }))
-    return [false, null]
+  const [readOk, content] = await fs
+    .readFile(path, 'utf8')
+    .then(v => some(v))
+    .catch(err => {
+      log('error', () => ({
+        message: 'failed to read models file',
+        path,
+        error: String(err),
+      }))
+      return NONE
+    })
+  if (!readOk) {
+    return NONE
   }
 
   let obj = {}
@@ -84,23 +93,46 @@ async function loadModelsJson(
       path,
       error: String(err),
     }))
-    return [false, null]
+    return NONE
   }
 
   try {
-    return [true, ModelsJson.parse(obj)]
+    return some(ModelsForFile.parse(obj))
   } catch (err) {
     log('error', () => ({
       message: 'models file failed schema validation',
       path,
       error: String(err),
     }))
-    return [false, null]
+    return NONE
   }
 }
 
+async function fillModelsForFile(
+  models: ModelsForFile,
+  baseInstructions: BaseInstructions,
+): Promise<boolean> {
+  for (const model of models.models) {
+    if (!model.display_name) {
+      model.display_name = model.slug
+    }
+
+    for (const reasoningLevel of model.supported_reasoning_levels) {
+      if (!reasoningLevel.description) {
+        reasoningLevel.description = reasoningLevel.effort
+      }
+    }
+
+    if (!model.base_instructions) {
+      model.base_instructions = await baseInstructions.load()
+    }
+  }
+
+  return true
+}
+
 export class ModelsManager {
-  _baseInstructions: string | null = null
+  _baseInstructions = new BaseInstructions()
 
   _models: ModelsResponse | null = null
   get models(): ModelsResponse {
@@ -112,40 +144,16 @@ export class ModelsManager {
   }
 
   async init(modelsPath: string): Promise<boolean> {
-    const [success, modelsJson] = await loadModelsJson(modelsPath)
-    if (!success) {
+    const [loaded, modelsJson] = await loadModelsForFile(modelsPath)
+    if (!loaded) {
       return false
     }
 
-    if (!(await this._fillModels(modelsJson))) {
+    if (!(await fillModelsForFile(modelsJson, this._baseInstructions))) {
       return false
     }
 
     this._models = ModelsResponse.parse(modelsJson)
-    return true
-  }
-
-  async _fillModels(models: ModelsJson): Promise<boolean> {
-    for (const model of models.models) {
-      if (!model.display_name) {
-        model.display_name = model.slug
-      }
-
-      for (const reasoningLevel of model.supported_reasoning_levels) {
-        if (!reasoningLevel.description) {
-          reasoningLevel.description = reasoningLevel.effort
-        }
-      }
-
-      if (!model.base_instructions) {
-        if (!this._baseInstructions) {
-          this._baseInstructions = await loadBaseInstructions()
-        }
-
-        model.base_instructions = this._baseInstructions
-      }
-    }
-
     return true
   }
 }
