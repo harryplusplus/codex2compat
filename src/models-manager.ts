@@ -47,24 +47,13 @@ const ModelsForFile = z.object({ models: ModelInfoForFile.array().default([]) })
 type ModelsForFile = z.infer<typeof ModelsForFile>
 
 class BaseInstructions {
-  _content: string | Promise<string> | null = null
+  _promise: Promise<string> | null = null
 
   read(): Promise<string> {
-    if (typeof this._content === 'string') {
-      return Promise.resolve(this._content)
+    if (!this._promise) {
+      this._promise = fs.readFile(BASE_INSTRUCTIONS_PATH, 'utf8')
     }
-
-    if (this._content !== null) {
-      return this._content
-    }
-
-    const promise = fs.readFile(BASE_INSTRUCTIONS_PATH, 'utf8').then(v => {
-      this._content = v
-      return v
-    })
-
-    this._content = promise
-    return promise
+    return this._promise
   }
 }
 
