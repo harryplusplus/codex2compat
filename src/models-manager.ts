@@ -47,13 +47,24 @@ const ModelsForFile = z.object({ models: ModelInfoForFile.array().default([]) })
 type ModelsForFile = z.infer<typeof ModelsForFile>
 
 class BaseInstructions {
-  _content: string | null = null
+  _content: string | Promise<string> | null = null
 
-  async load(): Promise<string> {
-    if (!this._content) {
-      this._content = await fs.readFile(BASE_INSTRUCTIONS_PATH, 'utf8')
+  read(): Promise<string> {
+    if (typeof this._content === 'string') {
+      return Promise.resolve(this._content)
     }
-    return this._content
+
+    if (this._content !== null) {
+      return this._content
+    }
+
+    const promise = fs.readFile(BASE_INSTRUCTIONS_PATH, 'utf8').then(v => {
+      this._content = v
+      return v
+    })
+
+    this._content = promise
+    return promise
   }
 }
 
@@ -124,7 +135,7 @@ async function fillModelsForFile(
     }
 
     if (!model.base_instructions) {
-      model.base_instructions = await baseInstructions.load()
+      model.base_instructions = await baseInstructions.read()
     }
   }
 
