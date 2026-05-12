@@ -297,27 +297,65 @@ type OpenAiChunk = {
 
 const log = createNamedLog('routes.responses')
 
+function randomHex(bytes: number): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+/**
+ * Generates a response ID
+ * Sample: resp_0309c0d6cb4ff519016a032143c2288191b3759a2e031f11b2
+ */
 function generateResponseId(): string {
-  // OpenAI Responses API format: resp_ + 50 hex chars (25 random bytes)
-  const hex = Array.from(crypto.getRandomValues(new Uint8Array(25)))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-  return `resp_${hex}`
+  return `resp_${randomHex(25)}`
 }
 
-function generateItemId(prefix: string = 'msg'): string {
-  // OpenAI Responses API format: prefix + 50 hex chars (25 random bytes)
-  const hex = Array.from(crypto.getRandomValues(new Uint8Array(25)))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-  return `${prefix}_${hex}`
+/**
+ * Generates a reasoning item ID
+ * Sample: rs_0309c0d6cb4ff519016a03214c9eb08191b938b46b170f9d90
+ */
+function generateReasoningItemId(): string {
+  return `rs_${randomHex(25)}`
 }
 
+/**
+ * Generates a message item ID
+ * Sample: msg_0309c0d6cb4ff519016a03214e4e7c8191bf036ec8113050a7
+ */
+function generateMessageItemId(): string {
+  return `msg_${randomHex(25)}`
+}
+
+/**
+ * Generates a function call item ID
+ * Sample: fc_0309c0d6cb4ff519016a032152eb1c819182b3994c61de195b
+ */
+function generateFunctionCallItemId(): string {
+  return `fc_${randomHex(25)}`
+}
+
+const BASE62 = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+/**
+ * Generates a call ID matching the OpenAI API format.
+ *
+ * Sample: call_ueWI5DaDk7YLNXdK8uBWyUTg
+ *
+ * Uses rejection sampling (byte < 248 → byte % 62) for unbiased
+ * 24-char [a-zA-Z0-9] output.
+ */
 function generateCallId(): string {
-  // Codex CLI format: call_ + base64url(18 bytes) = 29 chars
-  const buf = crypto.getRandomValues(new Uint8Array(18))
-  const b64 = Buffer.from(buf).toString('base64url').replace(/=+$/, '')
-  return `call_${b64}`
+  const result = Array.from({ length: 24 })
+  let i = 0
+  while (i < 24) {
+    const buf = crypto.getRandomValues(new Uint8Array(32))
+    for (const b of buf) {
+      if (b < 248) result[i++] = BASE62[b % 62]
+      if (i === 24) break
+    }
+  }
+  return `call_${result.join('')}`
 }
 
 // ---------------------------------------------------------------------------
