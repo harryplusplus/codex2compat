@@ -16,8 +16,8 @@ async function run(config: Config): Promise<boolean> {
   process.on('SIGINT', () => ac.abort())
   process.on('SIGTERM', () => ac.abort())
 
-  const modelsManager = new ModelsManager()
-  if (!(await modelsManager.init(config.models))) {
+  const [ok, modelsManager] = await ModelsManager.create(config.models)
+  if (!ok) {
     return false
   }
 

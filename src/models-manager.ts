@@ -10,7 +10,7 @@ import {
   TruncationPolicyConfig,
 } from './schemas/models.js'
 import stripJsonComments from 'strip-json-comments'
-import { NONE, some, type Option } from './utils.js'
+import { just, NOTHING, type Maybe } from './utils.js'
 
 const log = createNamedLog('models-manager')
 
@@ -57,7 +57,7 @@ class BaseInstructions {
   }
 }
 
-async function loadModelsForFile(path: string): Promise<Option<ModelsForFile>> {
+async function loadModelsForFile(path: string): Promise<Maybe<ModelsForFile>> {
   try {
     await fs.access(path)
   } catch (err) {
@@ -66,22 +66,19 @@ async function loadModelsForFile(path: string): Promise<Option<ModelsForFile>> {
       path,
       error: String(err),
     }))
-    return NONE
+    return NOTHING
   }
 
-  const [readOk, content] = await fs
-    .readFile(path, 'utf8')
-    .then(v => some(v))
-    .catch(err => {
-      log('error', () => ({
-        message: 'failed to read models file',
-        path,
-        error: String(err),
-      }))
-      return NONE
-    })
-  if (!readOk) {
-    return NONE
+  let content = ''
+  try {
+    content = await fs.readFile(path, 'utf8')
+  } catch (err) {
+    log('error', () => ({
+      message: 'failed to read models file',
+      path,
+      error: String(err),
+    }))
+    return NOTHING
   }
 
   let obj = {}
@@ -93,26 +90,26 @@ async function loadModelsForFile(path: string): Promise<Option<ModelsForFile>> {
       path,
       error: String(err),
     }))
-    return NONE
+    return NOTHING
   }
 
   try {
-    return some(ModelsForFile.parse(obj))
+    return just(ModelsForFile.parse(obj))
   } catch (err) {
     log('error', () => ({
       message: 'models file failed schema validation',
       path,
       error: String(err),
     }))
-    return NONE
+    return NOTHING
   }
 }
 
 async function fillModelsForFile(
-  models: ModelsForFile,
+  modelsForFile: ModelsForFile,
   baseInstructions: BaseInstructions,
-): Promise<boolean> {
-  for (const model of models.models) {
+): Promise<void> {
+  for (const model of modelsForFile.models) {
     if (!model.display_name) {
       model.display_name = model.slug
     }
@@ -123,37 +120,29 @@ async function fillModelsForFile(
       }
     }
 
-    if (!model.base_instructions) {
+    if (model.base_instructions == null) {
       model.base_instructions = await baseInstructions.read()
     }
   }
-
-  return true
 }
 
 export class ModelsManager {
-  _baseInstructions = new BaseInstructions()
+  models: ModelsResponse
 
-  _models: ModelsResponse | null = null
-  get models(): ModelsResponse {
-    if (!this._models) {
-      throw new Error('ModelsManager not initialized — call init() first')
-    }
-
-    return this._models
+  constructor(models: ModelsResponse) {
+    this.models = models
   }
 
-  async init(modelsPath: string): Promise<boolean> {
-    const [loaded, modelsJson] = await loadModelsForFile(modelsPath)
-    if (!loaded) {
-      return false
+  static async create(modelsPath: string): Promise<Maybe<ModelsManager>> {
+    const [ok, modelsForFile] = await loadModelsForFile(modelsPath)
+    if (!ok) {
+      return NOTHING
     }
 
-    if (!(await fillModelsForFile(modelsJson, this._baseInstructions))) {
-      return false
-    }
+    const baseInstructions = new BaseInstructions()
+    await fillModelsForFile(modelsForFile, baseInstructions)
 
-    this._models = ModelsResponse.parse(modelsJson)
-    return true
+    const models = ModelsResponse.parse(modelsForFile)
+    return just(new ModelsManager(models))
   }
 }
