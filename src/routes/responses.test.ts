@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { generateResponseId, generateItemId, generateCallId } from './responses.js'
+import {
+  generateResponseId,
+  generateItemId,
+  generateCallId,
+} from './responses.js'
 
 describe('ID generation', () => {
   it('generateResponseId returns resp_ + 50 hex chars', () => {

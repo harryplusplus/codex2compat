@@ -10,3 +10,7 @@ tmp/
 
 # Build
 dist/
+
+# Models file
+/models.json
+/models.jsonc

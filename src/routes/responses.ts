@@ -499,7 +499,10 @@ function sseEvent(
 function emitCreated(responseId: string, model?: string) {
   const seq = nextSseSeq()
   const ev = sseEvent('response.created', {
-    response: { id: responseId, ...(model ? { headers: { 'OpenAI-Model': model } } : {}) },
+    response: {
+      id: responseId,
+      ...(model ? { headers: { 'OpenAI-Model': model } } : {}),
+    },
     type: 'response.created',
   })
   log('debug', () => ({
@@ -634,11 +637,7 @@ function emitFailed(code: string, message: string) {
       error: { code, message },
     },
   })
-  log('debug', () => ({
-    message: 'sse > failed',
-    seq,
-    code,
-  }))
+  log('debug', () => ({ message: 'sse > failed', seq, code }))
   return ev
 }
 
@@ -882,12 +881,13 @@ async function handleRequest(
             index: c.index,
             finish_reason: c.finish_reason ?? null,
             content_len: c.delta.content?.length ?? 0,
-            tool_calls: c.delta.tool_calls?.map(tc => ({
-              index: tc.index,
-              id: tc.id ?? null,
-              name: tc.function?.name ?? null,
-              args_len: tc.function?.arguments?.length ?? 0,
-            })) ?? null,
+            tool_calls:
+              c.delta.tool_calls?.map(tc => ({
+                index: tc.index,
+                id: tc.id ?? null,
+                name: tc.function?.name ?? null,
+                args_len: tc.function?.arguments?.length ?? 0,
+              })) ?? null,
           })),
           has_usage: !!chunk.usage,
         }))
