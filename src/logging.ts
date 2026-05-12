@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi'
-import type { JsonValue } from './types.js'
+import type { JsonObject } from './json.js'
 
 export const LogLevel = z.enum(['debug', 'info', 'warn', 'error'])
 
@@ -20,7 +20,7 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   error: 40,
 }
 
-export type LogEntry = { message: string } & Record<string, JsonValue>
+export type LogEntry = { message: string } & JsonObject
 
 export type LogEntryFn = () => LogEntry
 

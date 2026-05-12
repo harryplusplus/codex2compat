@@ -10,7 +10,7 @@ import {
   TruncationPolicyConfig,
 } from './schemas/models.js'
 import stripJsonComments from 'strip-json-comments'
-import { just, NOTHING, type Maybe } from './utils.js'
+import { NOTHING, just, type Maybe } from './maybe.js'
 
 const log = createNamedLog('models-manager')
 
