@@ -17,7 +17,8 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "tsc",
-    "dev": "tsx src/main.ts"
+    "dev": "tsx src/main.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.47",
@@ -36,7 +37,8 @@
     "oxlint": "^1.63.0",
     "oxlint-tsgolint": "^0.22.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   },
   "engines": {
     "node": ">=22"

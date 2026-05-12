@@ -1,208 +1,213 @@
 # codex2compat
 
-Codex Responses API → OpenAI Chat Completions API 매핑 프록시.
-
-Codex CLI는 **Responses API** (`POST /v1/responses`)와 전용 ModelsResponse 포맷을 사용하지만,
-많은 LLM 제공자는 OpenAI **Chat Completions API** (`POST /v1/chat/completions`)만 지원합니다.
-이 어댑터가 그 차이를 중개합니다.
+Codex CLI **Responses API** → OpenAI **Chat Completions API** 변환 프록시.
 
 ```
-Codex CLI → codex2compat (localhost:4444) → upstream (OpenAI-compat /chat/completions)
+Codex CLI ── POST /responses ──→ codex2compat ── POST /v1/chat/completions ──→ upstream
+               GET /models      (localhost:4444)    (OpenAI 호환 API)
 ```
 
-> 지원 upstream: crof.ai, OpenRouter, LiteLLM, Ollama, OpenAI direct 등
-> Chat Completions API를 제공하는 모든 곳
+> 지원 upstream: CrofAI, OpenRouter, LiteLLM, Ollama, OpenAI 등 Chat Completions API를 제공하는 모든 곳
 
 ---
 
 ## 왜 필요한가
 
-- Codex CLI는 Responses API (`POST /v1/responses`)와 Codex 전용 `ModelsResponse` 포맷을 사용함
-- 대부분의 LLM 제공자는 Chat Completions API (`POST /v1/chat/completions`)만 지원함
-- OpenAI조차 Responses API를 아직 널리 지원하지 않음 (Chat Completions가 사실상 표준)
-- codex-relay(Rust)는 변환을 해주지만 `/v1/models` 변환은 안 함
-- 그래서 이걸 함
+Codex CLI는 자체 **Responses API** (`POST /responses`, 전용 ModelsResponse 포맷)를 사용하지만,
+대부분의 LLM 제공자는 OpenAI **Chat Completions API** (`POST /v1/chat/completions`)만 지원합니다.
+이 어댑터가 그 차이를 중개합니다.
 
 ---
 
 ## 현재 상태 (로컬)
 
-작동 중인 기능:
+| 엔드포인트 | 설명 | 상태 |
+|-----------|------|------|
+| `POST /responses` (streaming) | Responses API 요청 → Chat Completions 변환 → SSE 스트리밍 | ✅ 작동 |
+| `GET /models` | 로컬 models.json 파일 기반 모델 목록 반환 | ✅ 작동 |
+| `POST /responses` (non-streaming) | 미지원, Codex CLI는 항상 `stream:true` | ❌ 불필요 |
 
-| 엔드포인트 | 설명 |
-|-----------|------|
-| `GET /v1/models` | crof.ai 모델 목록 조회 → Codex `ModelsResponse` 변환 |
-| `POST /v1/responses` (non-streaming) | Responses API 요청 → Chat Completions 변환 → 응답 변환 |
-| `POST /v1/responses` (streaming) | SSE 스트리밍: Chat Completions 청크 → Responses API 이벤트로 변환 |
+---
 
-### 실행
+## 실행
 
 ```bash
-CROF_API_KEY=nahcrof_... npx tsx index.ts
-# → http://127.0.0.1:4444
+# 의존성 설치
+pnpm install
+
+# 실행 (환경변수)
+BASE_URL=https://crof.ai/v1  API_KEY=...  npx tsx src/cli.ts
+
+# 로컬 models 파일로 실행 (선택)
+npx tsx src/cli.ts --models ./models.jsonc --log-level debug --port 4444
 ```
+
+### CLI 플래그
+
+| 플래그 | 환경변수 | 기본값 | 설명 |
+|--------|---------|--------|------|
+| `--port` | `PORT` | `4444` | 서버 포트 |
+| `--host` | `HOST` | `0.0.0.0` | 서버 호스트 |
+| `--base-url` | `BASE_URL` | `https://crof.ai/v1` | upstream Chat Completions API URL |
+| `--models` | `MODELS_PATH` | — | 로컬 models.jsonc 파일 경로 |
+| `--log-level` | `LOG_LEVEL` | `info` | 로깅 레벨 (debug / info / warn / error) |
 
 ### Codex CLI 설정
 
 ```toml
 # ~/.codex/config.toml
-[model_providers]
-[model_providers.crof]
-base_url = "http://127.0.0.1:4444/v1"
-# API key는 직접 넣지 말고 CROF_API_KEY 환경변수로
-# 근데 codex가 provider config에서 환경변수 읽는 방식 확인 필요
+[model_providers.codex2compat]
+name = "codex2compat"
+base_url = "http://localhost:4444"
+
+# 활성화
+model_provider = "codex2compat"
 ```
+
+---
+
+## SSE 이벤트 포맷
+
+Codex CLI가 소비하는 Responses API SSE 이벤트 목록입니다.
+(OpenAI HTTP/SSE 응답을 Codex CLI 로그로 직접 검증 완료 — 2026-05-12)
+
+### 전송해야 하는 이벤트 (Codex CLI가 처리함)
+
+| 이벤트 | 설명 | 비고 |
+|--------|------|------|
+| `response.created` | 응답 시작 | `response.id` (resp_ + 50 hex) 포함 |
+| `response.output_item.added` | 새 output item 추가 | reasoning/message/function_call |
+| `response.output_text.delta` | 텍스트 스트리밍 | `item_id`, `delta` |
+| `response.output_item.done` | output item 완료 | 완전한 item payload |
+| `response.completed` | 응답 완료 | `usage` (tokens) 포함 |
+
+### Codex CLI가 무시하는 이벤트 (전송 불필요)
+
+OpenAI도 보내지만 Codex CLI의 `process_responses_event()`에서 `trace("unhandled")`로 드랍됩니다.
+
+| 이벤트 | 드랍 이유 |
+|--------|-----------|
+| `response.in_progress` | 처리 로직 없음 |
+| `response.content_part.added` | 처리 로직 없음 |
+| `response.content_part.done` | 처리 로직 없음 |
+| `response.output_text.done` | text는 `output_item.done`에서 제공 |
+| `response.function_call_arguments.delta` | args는 `output_item.done`에서 제공 |
+| `response.function_call_arguments.done` | args는 `output_item.done`에서 제공 |
+
+**결론**: `function_call_arguments.delta`는 전송해도 Codex CLI가 무시하므로 생략 가능. `output_item.done`에 `name`, `arguments`, `call_id`를 모두 포함해야 함.
+
+### OpenAI 검증된 이벤트 시퀀스
+
+```
+1. response.created
+2. response.output_item.added  (reasoning, rs_ prefix)
+3. response.output_item.done   (reasoning)
+4. response.output_item.added  (message, msg_ prefix)
+5. response.output_text.delta × N
+6. response.output_item.done   (message)
+7. response.output_item.added  (function_call, fc_ prefix)
+8. response.output_item.done   (function_call)
+9. response.completed          (usage 포함)
+```
+
+---
+
+## ID 포맷 (OpenAI 검증 완료)
+
+| ID | 포맷 | 예시 |
+|----|------|------|
+| `response.id` | `resp_` + 50 hex chars (25 bytes) | `resp_0309c0d6cb4ff519016a032143c2288191b3759a2e031f11b2` |
+| `item_id` (message) | `msg_` + 50 hex chars (25 bytes) | `msg_0309c0d6cb4ff519016a03214e4e7c8191bf036ec8113050a7` |
+| `item_id` (function_call) | `fc_` + 50 hex chars (25 bytes) | `fc_0309c0d6cb4ff519016a032152eb1c819182b3994c61de195b` |
+| `item_id` (reasoning) | `rs_` + 50 hex chars (25 bytes) | `rs_0309c0d6cb4ff519016a03214c9eb08191b938b46b170f9d90` |
+| `call_id` | `call_` + base64url(18 bytes) = 24 chars | `call_ueWI5DaDk7YLNXdK8uBWyUTg` |
 
 ---
 
 ## 아키텍처
 
-### 핵심 변환 로직
+### 디렉터리 구조
 
-| 레이어 | 입력 | 출력 | 비고 |
-|--------|------|------|------|
-| **Models** | crof.ai JSON (`{data: [{id, name, context_length, ...}]}`) | Codex `ModelsResponse` (`{models: [ModelInfo, ...]}`) | slug, shell_type, truncation_policy 등 Codex 고유 필드 자동 생성 |
-| **Request** | Responses API (`model, input, instructions, tools, ...`) | Chat Completions (`model, messages, tools, ...`) | `translate.rs` 로직을 그대로 TS로 포팅 |
-| **Response** (non-streaming) | Chat Completions JSON | Responses API JSON (`id, object, output, usage`) | 1:1 단순 변환 |
-| **Response** (streaming) | Chat Completions SSE chunks (`delta.content`, `delta.reasoning_content`, ...) | Responses API SSE events (`response.created`, `output_text.delta`, `function_call_arguments.delta`, `response.completed`) | `stream.rs` 로직을 그대로 TS로 포팅 |
+```
+src/
+├── cli.ts                  # CLI 엔트리포인트 (yargs)
+├── config.ts               # 환경변수 기반 Config 파싱
+├── logging.ts              # JSONL 로깅 (log, createNamedLog)
+├── error.ts                # 에러 타입
+├── deep-merge.ts           # JSON-safe 재귀 deep merge
+├── json.ts                 # OpenAI Chat Completions JSON 파싱 유틸
+├── maybe.ts                # Maybe 모나드
+├── server.ts               # Hono 서버 생성 + graceful shutdown
+├── app.ts                  # 라우트 등록 + notFound 핸들러
+├── context.ts              # 서비스 컨텍스트 (Config, ModelsManager)
+├── models-manager.ts       # 로컬 models.jsonc 파일 로딩 + 검증
+├── utils.ts                # 공통 유틸
+├── routes/
+│   ├── responses.ts        # POST /responses — 변환 + SSE 스트리밍 (1034줄)
+│   └── models.ts           # GET /models — 모델 목록 반환
+└── schemas/
+    └── models.ts           # Zod 스키마: ModelsResponse
+tmp/                        # 이전 단일-파일 구현 백업 (참고용)
+```
 
-### Session 관리
+### 핵심 변환 로직 (`src/routes/responses.ts`)
 
-- `previous_response_id` 기반 히스토리 복원을 위해 in-memory Map 사용
-- Reasoning content도 `reasoningByCallId` Map에 저장해서 tool call 재생성 시 복원
-- 현재는 간단한 Map; 필요하면 Redis나 파일로 확장 가능
+1. **요청 변환**: Responses API → Chat Completions
+   - Zod 스키마 검증 → `toChatMessages()`로 메시지 변환
+   - `convertTools()`로 function tools 변환
+   - Upstream `POST /v1/chat/completions` 전송
 
-### 모델 변환 매핑
+2. **SSE 스트리밍**: Chat Completions 청크 → Responses API 이벤트
+   - `delta.content` → `response.output_text.delta`
+   - `delta.tool_calls` → `response.output_item.added`/`done` (function_call)
+   - `usage` + `response.id` → `response.completed`
+   - ID 생성 (resp_/msg_/fc_ + hex, call_ + base64url)
 
-| crof.ai 필드 | Codex ModelInfo 필드 |
-|-------------|-------------------|
-| `id` | `slug` |
-| `name` | `display_name` |
-| `context_length` | `context_window`, `truncation_policy.limit`, `auto_compact_token_limit` |
-| `reasoning_effort` / `custom_reasoning` | `default_reasoning_level`, `supported_reasoning_levels` |
-| — | `shell_type: "shell_command"` (고정) |
-| — | `visibility: "list"` (고정) |
-| — | `base_instructions: ""` (고정, 필요시 config에서 오버라이드) |
+3. **상태 관리**
+   - `accumulatedContent`: 현재 메시지 텍스트 누적
+   - `accumulatedToolCalls`: tool call 인자 누적 (index별 Map)
+   - `flushCurrentItem()`: 메시지/tool call 완료 시 output_item.done 전송
+
+---
+
+## 개발
+
+```bash
+pnpm tsc --noEmit              # 타입 체크
+pnpm oxfmt src/                # 포맷
+pnpm oxlint --fix src/         # 린트
+npx tsx src/cli.ts             # 실행 (CLI)
+```
+
+### 출력 (stdout)
+
+```
+{"timestamp":"...","level":"info","name":"server","message":"listening on http://0.0.0.0:4444"}
+```
+
+`--log-level debug` 시 upstream 청크 디버그 로그도 출력:
+```
+{"timestamp":"...","level":"debug","name":"routes.responses","message":"upstream chunk","id":"chatcmpl-...","choices":[...]}
+```
 
 ---
 
 ## 기술 스택
 
-- **런타임**: Node.js 22+ (tsx로 실행)
-- **의존성**: 0 (Node.js 빌트인만 사용: `node:http`, `node:https`, `node:crypto`, `node:url`)
-- **실행**: `npx tsx index.ts` 또는 `node --experimental-strip-types index.ts`
+- **런타임**: Node.js 22+
+- **언어**: TypeScript (ESM, `module: nodenext`)
+- **웹 프레임워크**: Hono (`@hono/zod-openapi`)
+- **검증**: Zod v4
+- **패키지 매니저**: pnpm
+- **포맷/린트**: oxfmt / oxlint
+- **포맷팅**: JSONL 로깅 (표준 출력)
 
 ---
 
-## 브레인스토밍 / 미래 구현 (TODO)
+## 참고 자료
 
-### 1. Config 파일 지원
-
-```
-c2c.config.ts / .mts / .cts / .mjs / .cjs / .js
-```
-
-자동 탐색 + `--config` 플래그로 명시적 지정.
-
-정의:
-```typescript
-export default defineConfig({
-  models: {
-    "deepseek-v4-pro": {
-      shell_type: "local",
-      supports_parallel_tool_calls: true,
-      display_name: "DeepSeek V4 Pro (커스텀)",
-      base_instructions: "당신은 유용한 어시스턴트입니다.",
-      // ModelInfo의 모든 필드 오버라이드 가능
-    },
-  },
-  hooks: {
-    transformModel: (crofModel, defaultInfo) => modifiedInfo,
-    beforeChatRequest: (req) => modifiedReq,
-    afterChatResponse: (resp) => modifiedResp,
-    beforeSseEvent: (event, data) => modifiedData,
-  },
-  crof: {
-    base_url: "https://crof.ai/v1",
-    api_key_env: "CROF_API_KEY",
-  },
-  server: {
-    port: 4444,
-    host: "127.0.0.1",
-  },
-});
-```
-
-**TS config 읽기**: jiti를 dep으로 박거나 사용자에게 tsx 실행을 위임.  
-npm 배포 시에는 `.mjs`/`.cjs` config만 공식 지원하고 TS는 옵션.
-
-### 2. npm 배포 (`npx -y c2c@latest`)
-
-- `src/index.ts` → `tsc`로 `dist/index.mjs`로 컴파일
-- `package.json`: `dependencies: {}` (의존성 제로)
-- Config 로딩: `.mjs > .cjs > .js`만 공식 지원
-- TS config는 jiti를 peer dep으로 빼거나 사용자가 `npx tsx`로 실행
-
-### 3. 모델별 커스텀 필드
-
-crof.ai 모델마다 다른 필드가 있어서 config에서 provider별/모델별 매핑 가능하게:
-
-```typescript
-// 예: reasoning_effort 필드 이름이 모델마다 다름
-models: {
-  "deepseek-v4-pro": { reasoning_field: "reasoning_effort" },
-  "kimi-k2.6":      { reasoning_field: "custom_reasoning" },
-}
-```
-
-### 4. 멀티 upstream 지원
-
-```typescript
-upstreams: {
-  crof: { base_url: "https://crof.ai/v1", api_key_env: "CROF_API_KEY" },
-  openrouter: { base_url: "https://openrouter.ai/api/v1", api_key_env: "OPENROUTER_API_KEY" },
-}
-// 요청의 model prefix나 header로 라우팅
-```
-
-### 5. 헬스 체크 / 메트릭
-
-- `GET /v1` → alive 응답
-- `GET /-/metrics` → 요청 카운트, 레이턴시 등
-
-### 6. TLS / HTTPS 지원
-
-- `--cert` / `--key` 플래그로 localhost HTTPS 서빙
-- Codex CLI가 http를 허용하는지 확인 필요
-
-### 7. 응답 캐싱
-
-모델 목록은 TTL 기반 메모리 캐싱 (지금도 매번 fetch하는 중)
-
----
-
-## 기존 codex-relay와의 관계
-
-codex-relay (Rust, `codex-relay/`)는:
-- **안 하는 것**: `/v1/models` 변환 (pass-through만)
-- **안 하는 것**: SSE 스트리밍에서 reasoning_content 이벤트 분리
-- **하는 것**: Responses API ↔ Chat Completions 변환
-
-codex2compat (이 프로젝트)는 위 모든 것을 + `/v1/models` 변환까지 함.
-
----
-
-## 로컬 개발
-
-```bash
-# 실행
-CROF_API_KEY=... npx tsx index.ts
-
-# SSE 스트리밍 테스트
-curl -s -N -X POST http://127.0.0.1:4444/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-pro","input":"say hi","stream":true,"max_output_tokens":50}'
-
-# 모델 목록 테스트
-curl -s http://127.0.0.1:4444/v1/models | jq '.models | .[] | {slug, display_name, context_window}'
-```
+- `~/repo/upstreams/codex` — Codex CLI 소스 코드 (Rust)
+  - `codex-api/src/sse/responses.rs` — SSE 이벤트 처리 로직
+  - `codex-api/src/common.rs` — ResponseEvent enum
+  - `codex-api/src/endpoint/responses.rs` — HTTP 요청 구성
+- `~/.codex/log/codex-tui.log` — Codex CLI 로그 (`RUST_LOG=codex_api=trace`)
